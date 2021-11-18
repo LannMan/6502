@@ -2,23 +2,16 @@ PORTB = $6000
 PORTA = $6001
 DDRB = $6002
 DDRA = $6003
-INPUT = $1185
-FIRSTNIB = $1187
-SECONDNIB = $1188
+INPUT = $85
+FIRSTNIB = $87
+SECONDNIB = $88
 
-; 2ms Delay for one shot @ 1Mhz
-;t1_oneshot_h = %00001000
-; 2ms Delay for one shot @ 3Mhz
-t1_oneshot_h = %00011100
-t1_oneshot_l = %00000000
-
-; 2ms Delay for one shot @ 472hz
-;t1_oneshot_h = %00000000
-;t1_oneshot_l = %00000100
-
+ticks = $00 ; 4 bytes
+sleep_start_time = $06
+sleep_time_ms = $07
 
 ; VIA
-T1_LC  = $6004	; Write T1 low-order latechs | Read T1 low-order-counter
+T1_LC  = $6004	; Write T1 low-order latches | Read T1 low-order-counter
 T1_HC  = $6005	; Read/Write T1 high-order-counter
 T1_LL  = $6006	; Read/Write T1 low-order-latch
 T1_HL  = $6007	; Read/Write T1 high-order-latch
@@ -31,10 +24,10 @@ IFR    = $600d	; Interrupt Flag Register
 IER    = $600e  ; Interrupt Enable Register
 
 ; Control words for Auxiliary Control Register in 65c22
-T1_MODE0    = %00000000 	; One shot mode.
-T1_MODE1    = %01000000		; Continuous mode.
-T1_MODE2    = %10000000		; Mode 0. Plus PB7 one shot output
-T1_MODE3    = %11000000		; Mode 1. Plus PB7 square wave output
+T1MODE0    = %00000000 	; One shot mode.
+T1MODE1    = %01000000		; Continuous mode.
+T1MODE2    = %10000000		; Mode 0. Plus PB7 one shot output
+T1MODE3    = %11000000		; Mode 1. Plus PB7 square wave output
 
 RS	  = %01000000
 RW	  = %00100000
@@ -49,52 +42,55 @@ BF_STATUS = %01111111
 ;	Control - PB4 = E, PB5 = RW, PB6 = RS
 
 reset:
-  ldx #$ff
+  ldx #$ff ;; init the stack
   txs
-
-  lda #%11111111	; Set all pins on port B to output
+  lda #%11111111	; Set all pins on port B (6522) to output
   sta DDRB
-  lda #%11111111 	; Set all pins on port A to output
+  lda #%11111111 	; Set all pins on port A (6522) to output
   sta DDRA
-
-  lda T1_MODE0		; Set timer 1 to mode 0 without PB7 pulse
-  sta ACR		; Send command to ACR
-  
+  jsr init_timer  ; Start the hardware timer, at 3.088 Mhz, ticks are 1ms
+  lda #2          ; Blocking timer set for 2ms
+  sta sleep_time_ms 
   lda #%00000010	; Set 4-bit mode
   sta PORTB
-  jsr t1_oneshot
+  jsr sleep_oneshot_blocking
   lda #%00010010	; Set 4-bit mode
   sta PORTB
-  jsr t1_oneshot
+  jsr sleep_oneshot_blocking
   lda #%00000010	; Set 4-bit mode
   sta PORTB
-  jsr t1_oneshot
+  jsr sleep_oneshot_blocking
 
   lda #%00101000	; Set 4-bit mode; 2-line display; 5x8 font
   sta INPUT
   jsr lcd_instruction
 
-  jsr t1_oneshot
+  jsr sleep_oneshot_blocking
 
   lda #%00001110	; Display on; cursor on; blink off
   sta INPUT
   jsr lcd_instruction
 
-  jsr t1_oneshot
+  jsr sleep_oneshot_blocking
 
   lda #%00000110	; Increment and shift cursor, no scroll
   sta INPUT
   jsr lcd_instruction
 
-  jsr t1_oneshot
+  jsr sleep_oneshot_blocking
 
   lda #%00000001	; Clear display
   sta INPUT
   jsr lcd_instruction
 
-  jsr t1_oneshot
+  jsr sleep_oneshot_blocking
 
   ldx #0
+  jsr welcome
+
+loop:
+
+  jmp loop
 
 welcome: 
   lda message,x
@@ -104,13 +100,10 @@ welcome:
 
   inx 
   jmp welcome
+  rts
 
 
-  ;lda #$00		
 
-loop:
-  ;adc #$01
-  jmp loop
 
 
 lcd_wait:
@@ -209,18 +202,33 @@ send_lcd_char:
   pla
   rts
 
-
-t1_oneshot:
-  LDA #t1_oneshot_l 
+init_timer:
+  lda #0
+  sta ticks
+  sta ticks + 1
+  sta ticks + 2
+  sta ticks + 3
+  lda #T1MODE1    ; Set timer 1 to mode 1 continuous without PB7 pulse
+  sta ACR         ; Send command to ACR
+  LDA #$10        ; Low byte 00010000
   STA T1_LC    		;Low-Latch
-  LDA #t1_oneshot_h     	;Delay
+  LDA #$0c     	  ; High byte 00001100    Combined 2 bytes are 1ms at 3.088Mhz
   STA T1_HC     	;Loads also T1CL and Starts
-  LDA #$40
-LOOP:
-  BIT   IFR      	;Time Out?
-  BEQ   LOOP
-  LDA   T1_LL     	;Clear Interrupt Flag
-  rts  
+  lda #%11000000
+  sta IER
+  cli
+  rts
+
+sleep_oneshot_blocking:
+  lda ticks
+  sta sleep_start_time
+sleep_oneshot_loop:
+  sec
+  lda ticks
+  sbc sleep_start_time
+  cmp #sleep_time_ms
+  bcc sleep_oneshot_loop
+  rts 
 
 
 ;the lookup table
@@ -248,6 +256,15 @@ message: .asciiz "-   LannMan   -                          6502 Project      "
 nmi:
   rti
 irq:
+  bit T1_LC
+  inc ticks
+  bne end_irq
+  inc ticks + 1
+  bne end_irq
+  inc ticks + 2
+  bne end_irq
+  inc ticks + 3
+end_irq:
   rti
   
   .org $fffa
