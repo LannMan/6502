@@ -4,9 +4,7 @@ $last_address = 65535;
 while($address <= $last_address ){
     
     echo 
-        $address.chr(9).
-        "0x".str_pad(dechex($address),4,"0",STR_PAD_LEFT).chr(9).
-        str_pad(decbin($address),16,"0",STR_PAD_LEFT).chr(9);
+        $address.chr(9)."0x".str_pad(dechex($address),4,"0",STR_PAD_LEFT).chr(9).str_pad(decbin($address),16,"0",STR_PAD_LEFT).chr(9);
     switch($address){
         case 0:
             echo "0000 - 00ff = RAM [Zero Page]".chr(9); 
